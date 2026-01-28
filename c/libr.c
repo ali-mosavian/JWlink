@@ -77,7 +77,7 @@ static  void            SetDict( file_list *, unsigned_16 );
 static int ARCompName( const void *key, const void *vbase );
 static int ARCompIName( const void *key, const void *vbase );
 int (*CmpARRtn)( const void *, const void * ) = ARCompName;
-int (*CmpOMFRtn)( const void *, const void *, unsigned ) = memcmp;
+int (*CmpOMFRtn)( const void *, const void *, unsigned long ) = memcmp;
 
 #if defined( _M_IX86 ) && defined(__WATCOMC__)
 #if defined( __386__ )

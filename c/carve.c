@@ -31,6 +31,7 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "linkstd.h"
 #include "msg.h"
@@ -204,48 +205,21 @@ void *CarveZeroAlloc( carve_t cv )
 /********************************/
 {
     void *v;
-    unsigned *p;
+    void *p;
 
     if( cv->free_list == NULL ) {
         MakeFreeList( cv, newBlk( cv ), 0 );
     }
     _REMOVE_FROM_FREE( cv, v );
     p = v;
-    DbgAssert( ( cv->elm_size / sizeof(*p) ) <= 16 );
-    switch( cv->elm_size / sizeof(*p) ) {
-    case 16:
-        p[15] = 0;
-    case 15:
-        p[14] = 0;
-    case 14:
-        p[13] = 0;
-    case 13:
-        p[12] = 0;
-    case 12:
-        p[11] = 0;
-    case 11:
-        p[10] = 0;
-    case 10:
-        p[9] = 0;
-    case 9:
-        p[8] = 0;
-    case 8:
-        p[7] = 0;
-    case 7:
-        p[6] = 0;
-    case 6:
-        p[5] = 0;
-    case 5:
-        p[4] = 0;
-    case 4:
-        p[3] = 0;
-    case 3:
-        p[2] = 0;
-    case 2:
-        p[1] = 0;
-    case 1:
-        p[0] = 0;
-    }
+    /*
+        This used to use a small unrolled switch that assumed elements are
+        <= 16 * sizeof(unsigned). On 64-bit builds some structures exceed
+        that, tripping an internal debug abort.
+
+        Zeroing with memset is safe and keeps behavior consistent.
+    */
+    memset( p, 0, cv->elm_size );
     return p;
 }
 

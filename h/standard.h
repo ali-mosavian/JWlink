@@ -90,7 +90,11 @@
 
 #ifndef BOOL_DEFINED
 #define BOOL_DEFINED
+#if defined( __APPLE__ )
+#define bool int
+#else
 typedef int bool;
+#endif
 #endif
 typedef unsigned char   byte;
 typedef unsigned long   virt_mem;

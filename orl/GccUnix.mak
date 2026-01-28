@@ -21,7 +21,7 @@ extra_c_flags = -DDEBUG_OUT -g
 OUTD=GccUnixD
 endif
 
-c_flags =-D__UNIX__ -D_BSD_SOURCE $(extra_c_flags)
+c_flags =-D__UNIX__ -D_BSD_SOURCE -DLONG_IS_64BITS $(extra_c_flags)
 
 # CC=clang allowed
 CC ?= gcc

@@ -32,7 +32,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined( __APPLE__ )
+#include <malloc/malloc.h> /* for _expand() */
+#else
 #include <malloc.h>     /* for _expand() */
+#endif
 #ifdef TRMEM
     #include "trmem.h"
 #endif

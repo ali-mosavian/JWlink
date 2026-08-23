@@ -218,7 +218,10 @@ static unsigned CalcSavedFixSize( fix_type fixtype )
     } else {
         retval = sizeof( save_fixup ) + CalcAddendSize( fixtype );
         if( FRAME_HAS_DATA( FIX_GET_FRAME( fixtype ) ) ) {
-            retval += sizeof( unsigned_32 );
+            /* IncExecRelocs() reads this back as a full pointer, not
+             * 32 bits -- unlike FIX_CHANGE_SEG above, which already
+             * accounts for 64-bit hosts. */
+            retval += sizeof( void * );
         }
     }
     return( retval );
@@ -626,7 +629,8 @@ save_fixup_done:;
     }
     PermSaveFixup( &save, sizeof( save_fixup ) );
     if( FRAME_HAS_DATA( frame->type ) ) {
-        PermSaveFixup( &frame->u.abs, sizeof( unsigned_32 ) );
+        /* full pointer width, see CalcSavedFixSize() */
+        PermSaveFixup( &frame->u.abs, sizeof( void * ) );
     }
     if( !( save.flags & FIX_ADDEND_ZERO ) )  {
         PermSaveFixup( buff, CalcAddendSize( save.flags ) );

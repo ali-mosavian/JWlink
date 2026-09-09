@@ -102,6 +102,7 @@ struct fixinfo {
 	frame_spec *frame;
 	frame_spec *targ;
 	offset addend;
+	offset off;         /* fixup's offset in the unexpanded LIDATA block */
 };
 
 static void ProcIDBlock( obj_format ObjFormat, unsigned_32 *dest, struct objbuff *ob, unsigned_32 iterate, struct fixinfo *fi )
@@ -113,6 +114,7 @@ static void ProcIDBlock( obj_format ObjFormat, unsigned_32 *dest, struct objbuff
     unsigned_16     count;
     unsigned_16     inner;
     unsigned_32     rep;
+    offset          blockoff;
 
     if( iterate == 0 ) {  // no iterations, so abort.
         ob->curr = ob->end;
@@ -123,9 +125,12 @@ static void ProcIDBlock( obj_format ObjFormat, unsigned_32 *dest, struct objbuff
     if( count == 0 ) {
         len = *ob->curr;
         ++ob->curr;
+        blockoff = ob->curr - ob->start_lidata;
         do {
-            DEBUG((DBG_OLD, "ProcIDBlock(): curr/start/*dest=%h/%h/%h result=%h, iterate=%d", ob->curr, ob->start_lidata, *dest, *dest - ( ob->curr - ob->start_lidata ), iterate ));
-            StoreFixup( *dest - ( ob->curr - ob->start_lidata ), fi->type, fi->frame, fi->targ, fi->addend );
+            DEBUG((DBG_OLD, "ProcIDBlock(): blockoff/len/*dest/fixoff=%h/%h/%h/%h, iterate=%d", blockoff, len, *dest, fi->off, iterate ));
+            if( fi->off >= blockoff && fi->off < blockoff + len ) {
+                StoreFixup( *dest + ( fi->off - blockoff ), fi->type, fi->frame, fi->targ, fi->addend );
+            }
             *dest += len;
         } while( --iterate != 0 );
         ob->curr += len;
@@ -160,17 +165,20 @@ void StoreLidataFixup( offset off, fix_type type, frame_spec *frame,
                       frame_spec *targ, offset addend, obj_format ObjFormat, struct objbuff *ob )
 /****************************************************************************/
 {
-    /* <off> is relative position in LIDATA record, which is a quite
-     * different thing than a rel. position in LEDATA!
+    /* <off> names a byte of the *unexpanded* iterated data block, unlike
+     * in LEDATA where it is a position in the segment's data. Every copy
+     * the block expands into gets the fixup, so <start> tracks the
+     * expanded position while <off> stays a position in the record.
      */
     unsigned_32 rep;
     struct fixinfo fi;
-    unsigned_32 start = off;
+    unsigned_32 start = 0;
 
     fi.type = type;
     fi.frame = frame;
     fi.targ = targ;
     fi.addend = addend;
+    fi.off = off;
 
     while( ob->curr < ob->end ) {
         if( ObjFormat & FMT_MS_386 ) {

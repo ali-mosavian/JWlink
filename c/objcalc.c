@@ -168,7 +168,15 @@ static void ReOrderClasses( section *sec )
                     ord = ORD_STACK;
                 } else if( stricmp( name, BegDataClassName ) == 0 ) {
                     ord = ORD_BEGDGROUP;
-                } else if( stricmp( name, DataClassName ) == 0 ) {
+                } else if( ( LinkState & DOSSEG_FLAG )
+                        || stricmp( name, DataClassName ) == 0 ) {
+                    /* DOSSEG leaves the rest of DGROUP in first-seen order.
+                     * Splitting it by class name, or by whether the class holds
+                     * initialised data, swaps QuickBASIC's BC_VARS and BC_SEGS;
+                     * the BC module header holds BC_DATA..BC_FT as a range, so
+                     * reversed the runtime clears it with a negative length and
+                     * wipes DGROUP.
+                     */
                     ord = ORD_DATA;
                 } else if( currcl->flags & CLASS_LXDATA_SEEN ) {
                     ord = ORD_INITDGROUP;

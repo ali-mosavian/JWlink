@@ -88,11 +88,258 @@ static void             FindFloatSyms( void );
 static void             CheckClassUninitialized( class_entry *currcl );
 static void             SortClasses ( section *sec );
 
+/* MS LINK lays out the modules it pulls from a library in the library's own
+ * order, whatever order symbol resolution pulled them in; runtimes built
+ * with it, such as QuickBASIC's, depend on that layout. Objects keep their
+ * command line order and precede library modules. Every segment's pieces,
+ * every class's segments and the classes follow that module order.
+ */
+
+typedef struct {
+    mod_entry       *mod;
+    unsigned_32     rank;
+} mod_rank;
+
+typedef struct {
+    void            *item;
+    unsigned_32     rank;
+    unsigned_32     sub;    // SEGDEF order within the module
+    unsigned_32     seq;
+} ranked;
+
+#define NO_RANK     ((unsigned_32)~0UL)
+
+static mod_rank     *ModRanks;
+static unsigned     NumModRanks;
+
+static int CmpModRank( const void *a, const void *b )
+{
+    const mod_entry *x = ((const mod_rank *)a)->mod;
+    const mod_entry *y = ((const mod_rank *)b)->mod;
+
+    return( ( x < y ) ? -1 : ( x > y ) );
+}
+
+static int CmpRanked( const void *a, const void *b )
+{
+    const ranked    *x = a;
+    const ranked    *y = b;
+
+    if( x->rank != y->rank )
+        return( ( x->rank < y->rank ) ? -1 : 1 );
+    if( x->sub != y->sub )
+        return( ( x->sub < y->sub ) ? -1 : 1 );
+    return( ( x->seq < y->seq ) ? -1 : ( x->seq > y->seq ) );
+}
+
+static unsigned_32 ModRank( mod_entry *mod )
+{
+    mod_rank        key;
+    mod_rank        *found;
+
+    key.mod = mod;
+    found = bsearch( &key, ModRanks, NumModRanks, sizeof( mod_rank ), CmpModRank );
+    return( ( found == NULL ) ? NO_RANK : found->rank );
+}
+
+static int CmpLibModule( const void *a, const void *b )
+{
+    const mod_entry *x = ((const ranked *)a)->item;
+    const mod_entry *y = ((const ranked *)b)->item;
+
+    if( ((const ranked *)a)->rank != ((const ranked *)b)->rank )
+        return( ( ((const ranked *)a)->rank < ((const ranked *)b)->rank ) ? -1 : 1 );
+    if( x->location != y->location )
+        return( ( x->location < y->location ) ? -1 : 1 );
+    return( CmpRanked( a, b ) );
+}
+
+static void RankModules( void )
+{
+    mod_entry       *mod;
+    file_list       *lib;
+    ranked          *libs;
+    unsigned        count;
+    unsigned        nlibs;
+    unsigned        i;
+    unsigned_32     libnum;
+
+    count = 0;
+    for( mod = Root->mods; mod != NULL; mod = mod->n.next_mod )
+        count++;
+    nlibs = 0;
+    for( mod = LibModules; mod != NULL; mod = mod->n.next_mod )
+        nlibs++;
+    NumModRanks = count + nlibs;
+    _ChkAlloc( ModRanks, ( NumModRanks + 1 ) * sizeof( mod_rank ) );
+    _ChkAlloc( libs, ( nlibs + 1 ) * sizeof( ranked ) );
+    i = 0;
+    for( mod = Root->mods; mod != NULL; mod = mod->n.next_mod ) {
+        ModRanks[i].mod = mod;
+        ModRanks[i].rank = i;
+        i++;
+    }
+    nlibs = 0;
+    for( mod = LibModules; mod != NULL; mod = mod->n.next_mod ) {
+        /* the library's place in the search order; the linker's own module
+           has no library and stays first */
+        libnum = 0;
+        if( mod != FakeModule ) {
+            for( lib = ObjLibFiles; lib != NULL && lib != mod->f.source; lib = lib->next_file )
+                libnum++;
+            libnum++;
+        }
+        libs[nlibs].item = mod;
+        libs[nlibs].rank = libnum;
+        libs[nlibs].sub = 0;
+        libs[nlibs].seq = nlibs;
+        nlibs++;
+    }
+    qsort( libs, nlibs, sizeof( ranked ), CmpLibModule );
+    LibModules = NULL;
+    while( nlibs-- > 0 ) {
+        mod = libs[nlibs].item;
+        mod->n.next_mod = LibModules;
+        LibModules = mod;
+    }
+    _LnkFree( libs );
+    for( mod = LibModules; mod != NULL; mod = mod->n.next_mod ) {
+        ModRanks[i].mod = mod;
+        ModRanks[i].rank = i;
+        i++;
+    }
+    qsort( ModRanks, NumModRanks, sizeof( mod_rank ), CmpModRank );
+}
+
+static unsigned_32 SegdefIndex( segdata *piece )
+{
+    segdata         *sdata;
+    unsigned_32     index;
+
+    index = 0;
+    for( sdata = Ring2Step( piece->o.mod->segs, NULL ); sdata != NULL; sdata = Ring2Step( piece->o.mod->segs, sdata ) ) {
+        if( sdata == piece )
+            return( index );
+        index++;
+    }
+    return( index );
+}
+
+static unsigned_32 OrderPieces( seg_leader *seg, unsigned_32 *sub )
+/* sort seg's pieces by module; return the rank of the first, and in sub its
+   SEGDEF order in that module */
+{
+    segdata         *firstpiece;
+    ranked          *items;
+    segdata         *sdata;
+    unsigned        count;
+    unsigned        i;
+    unsigned_32     first;
+
+    count = 0;
+    first = NO_RANK;
+    firstpiece = NULL;
+    *sub = 0;
+    for( sdata = RingStep( seg->pieces, NULL ); sdata != NULL; sdata = RingStep( seg->pieces, sdata ) )
+        count++;
+    if( count == 0 )
+        return( first );
+    _ChkAlloc( items, count * sizeof( ranked ) );
+    i = 0;
+    for( sdata = RingStep( seg->pieces, NULL ); sdata != NULL; sdata = RingStep( seg->pieces, sdata ) ) {
+        items[i].item = sdata;
+        items[i].rank = ModRank( sdata->o.mod );
+        items[i].sub = 0;
+        items[i].seq = i;
+        i++;
+    }
+    /* a COMMON segment keeps its first piece: it carries the combined size */
+    if( seg->combine != COMBINE_COMMON ) {
+        qsort( items, count, sizeof( ranked ), CmpRanked );
+        seg->pieces = NULL;
+        for( i = 0; i < count; i++ ) {
+            RingAppend( &seg->pieces, items[i].item );
+        }
+    }
+    for( i = 0; i < count; i++ ) {
+        if( items[i].rank < first ) {
+            first = items[i].rank;
+            firstpiece = items[i].item;
+        }
+    }
+    _LnkFree( items );
+    if( firstpiece != NULL && firstpiece->o.mod != NULL )
+        *sub = SegdefIndex( firstpiece );
+    return( first );
+}
+
+static void OrderModules( void )
+{
+    class_entry     *class;
+    class_entry     **link;
+    seg_leader      *seg;
+    ranked          *items;
+    ranked          *classes;
+    unsigned        count;
+    unsigned        nclasses;
+    unsigned        i;
+    unsigned_32     first;
+
+    if( !( FmtData.type & ( MK_DOS_EXE | MK_COM ) ) || FmtData.u.dos.distribute )
+        return;
+    RankModules();
+    nclasses = 0;
+    for( class = Root->classlist; class != NULL; class = class->next_class )
+        nclasses++;
+    _ChkAlloc( classes, ( nclasses + 1 ) * sizeof( ranked ) );
+    nclasses = 0;
+    for( class = Root->classlist; class != NULL; class = class->next_class ) {
+        count = 0;
+        for( seg = RingStep( class->segs, NULL ); seg != NULL; seg = RingStep( class->segs, seg ) )
+            count++;
+        first = NO_RANK;
+        classes[nclasses].sub = 0;
+        if( count != 0 ) {
+            _ChkAlloc( items, count * sizeof( ranked ) );
+            i = 0;
+            for( seg = RingStep( class->segs, NULL ); seg != NULL; seg = RingStep( class->segs, seg ) ) {
+                items[i].item = seg;
+                items[i].rank = OrderPieces( seg, &items[i].sub );
+                items[i].seq = i;
+                i++;
+            }
+            qsort( items, count, sizeof( ranked ), CmpRanked );
+            class->segs = NULL;
+            for( i = 0; i < count; i++ ) {
+                RingAppend( &class->segs, items[i].item );
+            }
+            first = items[0].rank;
+            classes[nclasses].sub = items[0].sub;
+            _LnkFree( items );
+        }
+        classes[nclasses].item = class;
+        classes[nclasses].rank = first;
+        classes[nclasses].seq = nclasses;
+        nclasses++;
+    }
+    qsort( classes, nclasses, sizeof( ranked ), CmpRanked );
+    link = &Root->classlist;
+    for( i = 0; i < nclasses; i++ ) {
+        *link = classes[i].item;
+        link = &((class_entry *)classes[i].item)->next_class;
+    }
+    *link = NULL;
+    _LnkFree( classes );
+    _LnkFree( ModRanks );
+    ModRanks = NULL;
+}
+
 void CheckClassOrder( void )
 /*********************************/
 /* Reorder the classes if DOSSEG flag set or ORDER directive given */
 {
     DEBUG(( DBG_OLD, "CheckClassOrder() enter" ));
+    OrderModules();
     SortSegments();
     if( LinkState & SPEC_ORDER_FLAG ) {
        WalkAllSects( SortClasses );

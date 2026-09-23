@@ -735,6 +735,12 @@ static void AddUpSegData( void *_sdata )
 static void CalcSeg( seg_leader *seg )
 /************************************/
 {
+    /* MS LINK's DOSSEG leaves 16 null bytes at the start of _TEXT, so no
+       code sits at offset 0 */
+    if( ( LinkState & DOSSEG_FLAG ) && ( FmtData.type & ( MK_DOS_EXE | MK_COM ) )
+      && stricmp( seg->segname, "_TEXT" ) == 0 ) {
+        seg->size = 16;
+    }
     RingWalk( seg->pieces, AddUpSegData );
 }
 

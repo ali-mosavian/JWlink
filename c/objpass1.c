@@ -666,6 +666,15 @@ static void AddToLeader( seg_leader *seg, segdata *sdata )
             RingPush( &seg->pieces, sdata );
             sdata->length = length;
         } else {
+            /* LINK overlays every COMMON piece: this one's data and fixups
+               land in first's buffer (see GetObject), so it must hold both */
+            if( length > first->length && first->data != 0 ) {
+                virt_mem    grown;
+
+                grown = AllocStg( length );
+                CopyInfo( grown, first->data, first->length );
+                first->data = grown;
+            }
             sdata->isdead = TRUE;
             RingAppend( &seg->pieces, sdata );
             first->length = length;

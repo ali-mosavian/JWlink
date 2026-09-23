@@ -54,6 +54,7 @@
 #include "impexp.h"
 #include "objomf.h"
 #include "specials.h"
+#include "ring.h"
 
 /* forward declarations */
 
@@ -1179,6 +1180,16 @@ static void GetObject( segdata *seg, unsigned_32 obj_offset, bool lidata, struct
     unsigned    size;
     virt_mem    start;
 
+    /* a COMMON piece overlays the live one: LINK applies every module's
+       data and fixups to the same bytes */
+    if( seg->isdead && seg->combine == COMBINE_COMMON && !seg->isabs ) {
+        segdata     *live;
+
+        live = RingFirst( seg->u.leader->pieces );
+        if( live != NULL && !live->isdead && !live->isuninit && live->data != 0 ) {
+            seg = live;
+        }
+    }
     if( seg->isdead || seg->isabs ) {   /* ignore dead or abs segments */
         ObjFormat |= FMT_IGNORE_FIXUPP; /* and any corresponding fixupps */
         return;

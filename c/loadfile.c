@@ -30,6 +30,7 @@
 
 
 #include <string.h>
+#include <limits.h>
 #include <stdlib.h>
 #include "walloca.h"
 #include "linkstd.h"
@@ -343,6 +344,30 @@ static void DefBSSStartSize( char *name, class_entry *class )
     }
 }
 
+static void EndAtNextSegment( targ_addr *end, seg_leader *last )
+/* LINK ends BSS where the group's next segment starts, so the alignment gap
+   before it (the stack's, in DOSSEG order) counts as BSS */
+{
+    seg_leader      *seg;
+    unsigned long   at;
+    unsigned long   next;
+    unsigned long   here;
+
+    if( last->group == NULL )
+        return;
+    at = MK_REAL_ADDR( end->seg, end->off );
+    next = ULONG_MAX;
+    for( seg = Ring2Step( last->group->leaders, NULL ); seg != NULL; seg = Ring2Step( last->group->leaders, seg ) ) {
+        here = MK_REAL_ADDR( seg->seg_addr.seg, seg->seg_addr.off );
+        if( seg != last && seg->size != 0 && here >= at && here < next ) {
+            next = here;
+        }
+    }
+    if( next != ULONG_MAX && next - at < 16 ) {
+        end->off += next - at;
+    }
+}
+
 static void DefBSSEndSize( char *name, class_entry *class )
 /***********************************************************/
 /* set the value of an end symbol, and see if it has been defined */
@@ -359,6 +384,8 @@ static void DefBSSEndSize( char *name, class_entry *class )
         sym->p.seg = (segdata *) RingLast( seg->pieces );
         sym->addr.seg = seg->seg_addr.seg;
         sym->addr.off = seg->seg_addr.off + seg->size;
+        if( FmtData.type & ( MK_DOS_EXE | MK_COM ) )
+            EndAtNextSegment( &sym->addr, seg );
         ConvertToFrame( &sym->addr, seg->group->grp_addr.seg, !(seg->info & USE_32) );
     } else if( LinkState & DOSSEG_FLAG ) {
         CheckBSSInStart( sym, name );

@@ -623,6 +623,11 @@ save_fixup_done:;
     if( ( type & ( FIX_OFFSET_MASK | FIX_HIGH ) ) == FIX_HIGH_OFFSET_16 ) {
         addend += FixupOverflow << 16;
     }
+    /* a target displacement moves an offset, never a segment: LINK stores
+       the bare frame for a base fixup, whatever the displacement */
+    if( ( type & FIX_BASE ) && ( type & FIX_OFFSET_MASK ) == FIX_NO_OFFSET ) {
+        addend = 0;
+    }
     PatchOffset( &fix, addend, TRUE );
     if( MemIsZero( buff, size ) ) {
         save.flags |= FIX_ADDEND_ZERO;

@@ -488,9 +488,11 @@ static bool OMFSearchExtLib( file_list *lib, char *name, unsigned long *off )
     if( major_inc == 0 ) {
         major_inc = 1;
     }
-    minor_class = hash.minor_class;  /* ATK */
     do {/*  over major classes */
         SetDict( lib, major_class );
+        /* each block is searched from the name's own bucket, as a librarian
+           places a name that overflowed its block */
+        minor_class = hash.minor_class;
         minor_count = 37;
         do {/*  over minor classes */
             if( dict->buffer[ minor_class ] == LIB_NOT_FOUND ) {

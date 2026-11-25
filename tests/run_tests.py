@@ -62,18 +62,20 @@ def _dictionary_hash(name):
     return block, block_step, bucket % 37, (bucket_step % 37) or 1
 
 
-def _library(member, name, overflowed):
-    """A library of `member`, `name` in its dictionary as a librarian puts it
-    after its own block overflowed: the next block, at the name's bucket.
-    Its own block is full, the name's bucket there holds another name and
-    the bucket after it is empty."""
+def _library(member, name, librarian):
+    """A library of `member` with `name` one dictionary block past its own,
+    which is full: there the name's bucket holds another name and the bucket
+    after it is empty. In the next block MS LIB puts the name at that empty
+    bucket, Borland TLIB at its own."""
     page = 16
     pad = lambda data, to: data + bytes(-len(data) % to)
     modules = pad(member, page)
     body = pad(bytes(page) + modules + bytes([0xF1, 1, 0, 0]), 512)
     block, _, bucket, step = _dictionary_hash(name)
+    after = (bucket + step) % 37
+    slot = {'MS LIB': after, 'TLIB': bucket}[librarian]
     blocks = 2
-    home, next_block = block % blocks, (block % blocks + 1) % blocks
+    home = block % blocks
     def entry(text, module_page):
         raw = text.encode()
         return bytes([len(raw)]) + raw + struct.pack('<H', module_page)
@@ -81,20 +83,27 @@ def _library(member, name, overflowed):
     for at in range(blocks):
         table = bytearray(512)
         free = 38 // 2 + 1
-        entries = []
-        if at == home and overflowed:
-            entries = [(bucket, entry('_other', 0))]
-        if at == next_block or not overflowed:
-            entries = [(bucket, entry(name, 1))]
-        for slot, raw in entries:
-            table[slot] = free
-            table[free * 2:free * 2 + len(raw)] = raw
-            free += (len(raw) + 1) // 2
-        assert table[(bucket + step) % 37] == 0
-        table[37] = 0xFF if at == home and overflowed else free
+        at_slot, raw = (bucket, entry('_other', 0)) if at == home else (slot, entry(name, 1))
+        table[at_slot] = free
+        table[free * 2:free * 2 + len(raw)] = raw
+        free += (len(raw) + 1) // 2
+        table[37] = 0xFF if at == home else free
         dictionary.append(bytes(table))
     header = bytes([0xF0]) + struct.pack('<HIH', page - 3, len(body), blocks) + bytes([1])
     return pad(header, page) + body[page:] + b''.join(dictionary)
+
+
+def _link_with_library(tmp, librarian):
+    lib = os.path.join(tmp, 'ONE.LIB')
+    with open(os.path.join(HERE, 'dict_member.obj'), 'rb') as f:
+        member = f.read()
+    with open(lib, 'wb') as f:
+        f.write(_library(member, '_needed', librarian))
+    exe = os.path.join(tmp, 'OUT.EXE')
+    r = subprocess.run([JWLINK, 'option', 'quiet', 'format', 'dos', 'name', exe,
+                        'file', os.path.join(HERE, 'dict_caller.obj'), 'library', lib],
+                       capture_output=True)
+    assert r.returncode == 0 and os.path.exists(exe), (r.stdout + r.stderr).decode()
 
 
 def test_a_library_symbol_past_a_full_dictionary_block_is_found(tmp):
@@ -102,16 +111,15 @@ def test_a_library_symbol_past_a_full_dictionary_block_is_found(tmp):
     than the name's own: Borland CM.LIB's _strcmp and _strncpy, each one
     block on, were undefined and QCport would not link without them
     extracted."""
-    lib = os.path.join(tmp, 'ONE.LIB')
-    with open(os.path.join(HERE, 'dict_member.obj'), 'rb') as f:
-        member = f.read()
-    with open(lib, 'wb') as f:
-        f.write(_library(member, '_needed', True))
-    exe = os.path.join(tmp, 'OUT.EXE')
-    r = subprocess.run([JWLINK, 'option', 'quiet', 'format', 'dos', 'name', exe,
-                        'file', os.path.join(HERE, 'dict_caller.obj'), 'library', lib],
-                       capture_output=True)
-    assert r.returncode == 0 and os.path.exists(exe), (r.stdout + r.stderr).decode()
+    _link_with_library(tmp, 'TLIB')
+
+
+def test_a_symbol_ms_lib_put_past_a_full_dictionary_block_is_found(tmp):
+    """Searching each block from the name's own bucket missed names MS LIB
+    and jwlib put at the bucket where the full block's probe stopped:
+    VBDCL10E.LIB's __fptrap and __fpreset and UGLV.LIB's UGLPOLYTP were
+    undefined, so VBDOS BC programs with mgl would not link."""
+    _link_with_library(tmp, 'MS LIB')
 
 
 def main():

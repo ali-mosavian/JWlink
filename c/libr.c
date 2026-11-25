@@ -475,8 +475,8 @@ static bool OMFSearchExtLib( file_list *lib, char *name, unsigned long *off )
     unsigned_16     major_count;
     unsigned_16     major_class;
     unsigned_16     major_inc;
-    unsigned_16     minor_count;
     unsigned_16     sector;
+    bool            has_room;
     hash_entry      hash;
     omf_dict_entry  *dict;
 
@@ -490,25 +490,21 @@ static bool OMFSearchExtLib( file_list *lib, char *name, unsigned long *off )
     }
     do {/*  over major classes */
         SetDict( lib, major_class );
-        /* each block is searched from the name's own bucket, as a librarian
-           places a name that overflowed its block */
-        minor_class = hash.minor_class;
-        minor_count = 37;
-        do {/*  over minor classes */
+        /* every bucket is tried: past a full block MS LIB keeps probing from
+           the bucket it stopped at, Borland TLIB from the name's own bucket */
+        has_room = FALSE;
+        for( minor_class = 0; minor_class < 37; ++minor_class ) {
             if( dict->buffer[ minor_class ] == LIB_NOT_FOUND ) {
-                if( dict->buffer[ 37 ] != LIB_FULL_PAGE ) return( FALSE );
-                break;
+                has_room = TRUE;
+                continue;
             }
             sector = OMFCompName( name, dict->buffer, minor_class );
             if( sector != 0 ) {
                 *off = (unsigned long) dict->rec_length * sector;
                 return TRUE;
             }
-            minor_class += hash.minor_inc;
-            if( minor_class >= 37 ) {
-                minor_class -= 37;
-            }
-        } while( !( --minor_count == 0 ) );
+        }
+        if( has_room && dict->buffer[ 37 ] != LIB_FULL_PAGE ) return( FALSE );
         major_class += major_inc;
         if( major_class >= dict->pages ) {
             major_class -= dict->pages;
